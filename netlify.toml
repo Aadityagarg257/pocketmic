@@ -1,2 +1,12 @@
 [build]
   publish = "client"
+
+[[redirects]]
+  from = "/"
+  to = "/pc.html"
+  status = 302
+
+[[redirects]]
+  from = "/*"
+  to = "/pc.html"
+  status = 404
