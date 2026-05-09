@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PocketMic — PC</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: monospace;
+      background: #0a0a0a;
+      color: #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      gap: 24px;
+    }
+    h1 { font-size: 1.4rem; color: #fff; letter-spacing: 2px; }
+    #status {
+      padding: 8px 20px;
+      border-radius: 4px;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      font-size: 0.85rem;
+    }
+    #session-url {
+      font-size: 0.75rem;
+      color: #888;
+      word-break: break-all;
+      max-width: 380px;
+      text-align: center;
+    }
+    #copy-btn {
+      padding: 10px 24px;
+      background: #fff;
+      color: #000;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: monospace;
+      font-size: 0.9rem;
+    }
+    #copy-btn:hover { background: #ccc; }
+    #visualizer {
+      width: 300px;
+      height: 60px;
+      background: #111;
+      border-radius: 4px;
+      border: 1px solid #222;
+    }
+    .dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #333;
+      display: inline-block;
+    }
+    .dot.active { background: #4ade80; }
+  </style>
+</head>
+<body>
+  <h1>POCKETMIC</h1>
+  <div class="dot" id="dot"></div>
+  <div id="status">Generating session…</div>
+  <div id="session-url"></div>
+  <button id="copy-btn" style="display:none">Copy Phone Link</button>
+  <canvas id="visualizer"></canvas>
+  <audio id="audio" autoplay></audio>
+
+  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+  <script>
+    const SIGNAL = "https://YOUR-RENDER-URL.onrender.com"; // ← replace
+    const statusEl = document.getElementById("status");
+    const urlEl = document.getElementById("session-url");
+    const copyBtn = document.getElementById("copy-btn");
+    const dot = document.getElementById("dot");
+    const audio = document.getElementById("audio");
+    const canvas = document.getElementById("visualizer");
+    const ctx = canvas.getContext("2d");
+
+    let pc;
+
+    async function init() {
+      // Get a session ID from server
+      const res = await fetch(SIGNAL + "/session");
+      const { sessionId } = await res.json();
+
+      const phoneUrl = `${location.origin}/phone.html?s=${sessionId}`;
+      urlEl.textContent = phoneUrl;
+      copyBtn.style.display = "block";
+      copyBtn.onclick = () => { navigator.clipboard.writeText(phoneUrl); copyBtn.textContent = "Copied!"; };
+
+      statusEl.textContent = "Waiting for phone…";
+
+      const socket = io(SIGNAL);
+      socket.emit("join", sessionId);
+
+      // PC is the "receiver" — waits for offer
+      socket.on("peer-joined", async () => {
+        statusEl.textContent = "Phone connected, starting…";
+        pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+
+        pc.onicecandidate = (e) => {
+          if (e.candidate) socket.emit("ice", { sessionId, candidate: e.candidate });
+        };
+
+        pc.ontrack = (e) => {
+          statusEl.textContent = "🎙️ Live";
+          dot.classList.add("active");
+          audio.srcObject = e.streams[0];
+          startVisualizer(e.streams[0]);
+        };
+      });
+
+      socket.on("offer", async (offer) => {
+        if (!pc) return;
+        await pc.setRemoteDescription(offer);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit("answer", { sessionId, answer });
+      });
+
+      socket.on("ice", async (candidate) => {
+        if (pc && candidate) await pc.addIceCandidate(candidate);
+      });
+    }
+
+    function startVisualizer(stream) {
+      const audioCtx = new AudioContext();
+      const src = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 64;
+      src.connect(analyser);
+      const data = new Uint8Array(analyser.frequencyBinCount);
+
+      function draw() {
+        requestAnimationFrame(draw);
+        analyser.getByteFrequencyData(data);
+        ctx.fillStyle = "#111";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const bw = canvas.width / data.length;
+        data.forEach((v, i) => {
+          const h = (v / 255) * canvas.height;
+          ctx.fillStyle = "#4ade80";
+          ctx.fillRect(i * bw, canvas.height - h, bw - 1, h);
+        });
+      }
+      draw();
+    }
+
+    init();
+  </script>
+</body>
+</html>

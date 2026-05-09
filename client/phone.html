@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PocketMic — Phone</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: monospace;
+      background: #0a0a0a;
+      color: #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      gap: 28px;
+      padding: 20px;
+    }
+    h1 { font-size: 1.2rem; letter-spacing: 2px; }
+    #status { font-size: 0.85rem; color: #888; text-align: center; }
+    #mute-btn {
+      width: 100px; height: 100px;
+      border-radius: 50%;
+      border: 2px solid #4ade80;
+      background: transparent;
+      color: #4ade80;
+      font-size: 2rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    #mute-btn.muted {
+      border-color: #ef4444;
+      color: #ef4444;
+    }
+    #mute-btn:active { transform: scale(0.95); }
+    .label { font-size: 0.7rem; color: #555; }
+  </style>
+</head>
+<body>
+  <h1>POCKETMIC</h1>
+  <div id="status">Connecting…</div>
+  <button id="mute-btn">🎙️</button>
+  <div class="label">tap to mute</div>
+
+  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+  <script>
+    const SIGNAL = "https://YOUR-RENDER-URL.onrender.com"; // ← replace
+    const sessionId = new URLSearchParams(location.search).get("s");
+    const statusEl = document.getElementById("status");
+    const muteBtn = document.getElementById("mute-btn");
+
+    let muted = false;
+    let localStream;
+
+    muteBtn.onclick = () => {
+      muted = !muted;
+      if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = !muted);
+      muteBtn.textContent = muted ? "🔇" : "🎙️";
+      muteBtn.classList.toggle("muted", muted);
+    };
+
+    async function init() {
+      if (!sessionId) { statusEl.textContent = "No session ID in URL."; return; }
+
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+
+      const socket = io(SIGNAL);
+      socket.emit("join", sessionId);
+      statusEl.textContent = "Waiting for PC…";
+
+      const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+
+      localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) socket.emit("ice", { sessionId, candidate: e.candidate });
+      };
+
+      socket.on("peer-joined", async () => {
+        // Phone makes the offer
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit("offer", { sessionId, offer });
+        statusEl.textContent = "Connecting…";
+      });
+
+      socket.on("answer", async (answer) => {
+        await pc.setRemoteDescription(answer);
+        statusEl.textContent = "🟢 Live — speaking now";
+      });
+
+      socket.on("ice", async (candidate) => {
+        if (candidate) await pc.addIceCandidate(candidate);
+      });
+    }
+
+    init().catch(e => { statusEl.textContent = "Error: " + e.message; });
+  </script>
+</body>
+</html>
