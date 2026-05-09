@@ -45,58 +45,58 @@
   <div class="label">tap to mute</div>
 
   <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
-  <script>
-    const SIGNAL = "https://pocketmic.onrender.com"; // ← replace
-    const sessionId = new URLSearchParams(location.search).get("s");
-    const statusEl = document.getElementById("status");
-    const muteBtn = document.getElementById("mute-btn");
+<script>
+  const SIGNAL = "https://pocketmic.onrender.com";
+  const sessionId = new URLSearchParams(location.search).get("s");
+  const statusEl = document.getElementById("status");
+  const muteBtn = document.getElementById("mute-btn");
 
-    let muted = false;
-    let localStream;
+  let muted = false;
+  let localStream;
+  let pc;
 
-    muteBtn.onclick = () => {
-      muted = !muted;
-      if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = !muted);
-      muteBtn.textContent = muted ? "🔇" : "🎙️";
-      muteBtn.classList.toggle("muted", muted);
+  muteBtn.onclick = () => {
+    muted = !muted;
+    if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = !muted);
+    muteBtn.textContent = muted ? "🔇" : "🎙️";
+    muteBtn.classList.toggle("muted", muted);
+  };
+
+  async function init() {
+    if (!sessionId) { statusEl.textContent = "No session ID."; return; }
+
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+
+    const socket = io(SIGNAL);
+    socket.emit("join", sessionId);
+    statusEl.textContent = "Waiting for PC…";
+
+    pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate) socket.emit("ice", { sessionId, candidate: e.candidate });
     };
 
-    async function init() {
-      if (!sessionId) { statusEl.textContent = "No session ID in URL."; return; }
+    // Server tells phone to make the offer
+    socket.on("start-offer", async () => {
+      statusEl.textContent = "Connecting…";
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit("offer", { sessionId, offer });
+    });
 
-      localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    socket.on("answer", async (answer) => {
+      await pc.setRemoteDescription(answer);
+      statusEl.textContent = "🟢 Live";
+    });
 
-      const socket = io(SIGNAL);
-      socket.emit("join", sessionId);
-      statusEl.textContent = "Waiting for PC…";
+    socket.on("ice", async (candidate) => {
+      if (candidate) await pc.addIceCandidate(candidate);
+    });
+  }
 
-      const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
-
-      localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-
-      pc.onicecandidate = (e) => {
-        if (e.candidate) socket.emit("ice", { sessionId, candidate: e.candidate });
-      };
-
-      socket.on("peer-joined", async () => {
-        // Phone makes the offer
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        socket.emit("offer", { sessionId, offer });
-        statusEl.textContent = "Connecting…";
-      });
-
-      socket.on("answer", async (answer) => {
-        await pc.setRemoteDescription(answer);
-        statusEl.textContent = "🟢 Live — speaking now";
-      });
-
-      socket.on("ice", async (candidate) => {
-        if (candidate) await pc.addIceCandidate(candidate);
-      });
-    }
-
-    init().catch(e => { statusEl.textContent = "Error: " + e.message; });
-  </script>
+  init().catch(e => { statusEl.textContent = "Error: " + e.message; });
+</script>
 </body>
 </html>
