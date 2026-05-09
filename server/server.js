@@ -8,11 +8,8 @@ const app = express();
 app.use(cors());
 
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: "*" }
-});
+const io = new Server(server, { cors: { origin: "*" } });
 
-// rooms[sessionId] = [socket1, socket2]
 const rooms = {};
 
 app.get("/session", (req, res) => {
@@ -21,16 +18,22 @@ app.get("/session", (req, res) => {
 });
 
 io.on("connection", (socket) => {
+
   socket.on("join", (sessionId) => {
     socket.join(sessionId);
+
     if (!rooms[sessionId]) rooms[sessionId] = [];
     rooms[sessionId].push(socket.id);
 
-    // Tell the other peer someone joined
-    socket.to(sessionId).emit("peer-joined");
+    const count = rooms[sessionId].length;
+
+    // Tell phone (second joiner) to make the offer
+    if (count === 2) {
+      io.to(rooms[sessionId][1]).emit("start-offer");
+      io.to(rooms[sessionId][0]).emit("peer-joined");
+    }
   });
 
-  // WebRTC signaling relay
   socket.on("offer", ({ sessionId, offer }) => {
     socket.to(sessionId).emit("offer", offer);
   });
