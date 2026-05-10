@@ -55,3 +55,7 @@ io.on("connection", (socket) => {
 });
 
 server.listen(3001, () => console.log("Signaling on :3001"));
+// Keep alive ping
+setInterval(() => {
+  console.log("alive");
+}, 25000);
